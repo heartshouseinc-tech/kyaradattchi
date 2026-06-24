@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>なりきりAI</title>
+<style>
+:root{--bg:#080a00;--bg2:#101400;--bg3:#181e00;--card:#141800;--bor:rgba(255,220,50,.12);--bor2:rgba(255,220,50,.28);--gold:#f0b830;--gold2:#d4960a;--gold-xl:rgba(240,184,48,.12);--grn:#10b981;--red:#ef4444;--txt:#fffff0;--txt2:#c0c080;--txt3:#708040;--r:12px;--r2:8px;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--txt);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;height:100dvh;display:flex;flex-direction:column;}
+/* 最小ヘッダー */
+.hdr{background:rgba(20,24,0,.9);border-bottom:1.5px solid var(--bor);padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.back-btn{padding:4px 12px;border-radius:20px;border:1.5px solid var(--bor2);background:transparent;color:var(--txt3);font-size:11px;cursor:pointer;font-family:inherit;text-decoration:none;}
+.char-name{font-size:14px;font-weight:900;color:var(--gold);flex:1;}
+.change-btn{padding:4px 10px;border-radius:20px;border:1.5px solid var(--bor2);background:transparent;color:var(--txt3);font-size:10px;cursor:pointer;font-family:inherit;}
+/* チャット */
+.msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;}
+.msg-row{display:flex;gap:8px;align-items:flex-start;}
+.msg-row.user{flex-direction:row-reverse;}
+.avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;background:var(--gold-xl);border:1.5px solid var(--bor2);}
+.bubble{max-width:82%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.9;}
+.bubble.ai{background:var(--card);border:1.5px solid var(--bor2);}
+.bubble.user{background:var(--gold-xl);border:1.5px solid var(--bor2);}
+.typing{display:flex;gap:4px;align-items:center;padding:6px;}
+.td{width:6px;height:6px;border-radius:50%;background:var(--gold);animation:tdot .8s infinite;}
+.td:nth-child(2){animation-delay:.15s;}
+.td:nth-child(3){animation-delay:.3s;}
+@keyframes tdot{0%,60%,100%{opacity:.3;}30%{opacity:1;}}
+/* 入力 */
+.footer{background:rgba(20,24,0,.9);border-top:1.5px solid var(--bor);padding:10px 14px;flex-shrink:0;}
+.input-row{display:flex;gap:8px;}
+.inp-ta{flex:1;padding:10px 13px;background:var(--bg3);border:1.5px solid var(--bor);border-radius:20px;color:var(--txt);font-size:13px;font-family:inherit;resize:none;outline:none;max-height:80px;line-height:1.6;}
+.inp-ta:focus{border-color:var(--gold);}
+.send-btn{padding:10px 16px;border-radius:20px;border:none;background:linear-gradient(135deg,var(--gold2),var(--gold));color:#000;font-size:13px;font-weight:700;cursor:pointer;}
+/* 準備中オーバーレイ */
+.preparing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;}
+.prep-ico{font-size:40px;animation:spin 1.5s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.prep-txt{font-size:12px;color:var(--txt3);}
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1.5px solid var(--bor2);color:var(--txt);padding:8px 18px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;}
+#toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <a class="back-btn" href="petchi-hub.html">← 戻る</a>
+  <div class="char-name" id="char-name">キャラ未選択</div>
+  <button class="change-btn" onclick="goChange()">変更</button>
+</div>
+
+<div id="chat-area" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;">
+  <div class="preparing" id="preparing">
+    <div class="prep-ico">🎭</div>
+    <div class="prep-txt" id="prep-txt">キャラを準備中...</div>
+  </div>
+</div>
+
+<div class="footer" id="footer" style="display:none;">
+  <div class="input-row">
+    <textarea class="inp-ta" id="inp" rows="1"
+      oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doSend();}"></textarea>
+    <button class="send-btn" onclick="doSend()">送</button>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+var EP='https://asia-northeast1-kensetsu-nippo-842a2.cloudfunctions.net/askAI';
+var KEY='HeartsHouse2026Key';
+var currentChar=null;
+var currentPrompt='';
+var messages=[];
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+var _tt;
+function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(function(){t.classList.remove('show');},3000);}
+
+async function callAI(prompt,sys,cache){
+  var body={model:'gemini-2.5-flash',mode:'normal',prompt:prompt,useSearch:false,useCache:!!cache};
+  if(sys) body.system=sys;
+  var r=await fetch(EP,{method:'POST',headers:{'Content-Type':'application/json','x-access-key':KEY},body:JSON.stringify(body)});
+  var d=await r.json().catch(function(){return{};});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return d?.data?.text||d?.candidates?.[0]?.content?.parts?.[0]?.text||d?.text||'';
+}
+
+async function setChar(charData){
+  currentChar=charData;
+  messages=[];
+  var name=charData.name||'不明';
+  document.getElementById('char-name').textContent=name;
+  document.getElementById('inp').placeholder=name+'に話しかける...';
+  document.getElementById('preparing').style.display='flex';
+  document.getElementById('footer').style.display='none';
+  document.getElementById('prep-txt').textContent=name+'のなりきりエンジンを起動中...';
+
+  // なりきりプロンプトを生成
+  var catchp=(charData.catchphrases||[]).join('、');
+  var lines=(charData.famous_lines||[]).slice(0,2).join('・');
+  var enginePrompt='キャラ名:'+name+' 口調:'+charData.speech_style+' 口癖:'+catchp+' 性格:'+charData.personality+' 思考:'+charData.thinking_pattern+' 名言:'+lines;
+  var genPrompt='以下のキャラクター情報から、なりきりチャット用のシステムプロンプトを50〜100文字で生成してください。口調・口癖・性格を凝縮して。\n'+enginePrompt;
+
+  try{
+    var generated=await callAI(genPrompt,null,true);
+    currentPrompt=generated+'\n絶対にAIと明かさず、どんな質問にも'+name+'として答えること。';
+
+    // 初回挨拶
+    var hello=await callAI(name+'として登場し、1〜2文で挨拶して。',currentPrompt,false);
+    document.getElementById('preparing').style.display='none';
+    document.getElementById('footer').style.display='block';
+    addMsg('ai',hello);
+    messages.push({role:'assistant',content:hello});
+    showToast(name+'の準備完了');
+  }catch(e){
+    document.getElementById('prep-txt').textContent='エラー: '+e.message.slice(0,30);
+  }
+}
+
+function addMsg(role,content){
+  var area=document.getElementById('chat-area');
+  // preparingを非表示
+  var prep=document.getElementById('preparing');
+  if(prep) prep.style.display='none';
+  var row=document.createElement('div');
+  row.className='msg-row '+(role==='user'?'user':'');
+  var av=document.createElement('div');av.className='avatar';av.textContent=role==='user'?'👤':'🎭';
+  var bub=document.createElement('div');bub.className='bubble '+(role==='user'?'user':'ai');
+  bub.textContent=content;
+  row.appendChild(av);row.appendChild(bub);
+  area.appendChild(row);
+  area.scrollTop=area.scrollHeight;
+}
+function addTyping(){
+  var area=document.getElementById('chat-area');
+  var row=document.createElement('div');row.id='typing-row';row.className='msg-row';
+  row.innerHTML='<div class="avatar">🎭</div><div class="bubble ai"><div class="typing"><div class="td"></div><div class="td"></div><div class="td"></div></div></div>';
+  area.appendChild(row);area.scrollTop=area.scrollHeight;
+}
+function removeTyping(){var r=document.getElementById('typing-row');if(r)r.remove();}
+
+function doSend(){
+  var inp=document.getElementById('inp');
+  var text=inp.value.trim();if(!text)return;
+  inp.value='';inp.style.height='auto';
+  if(!currentChar){showToast('キャラが未選択です');return;}
+  addMsg('user',text);
+  messages.push({role:'user',content:text});
+  addTyping();
+  var hist=messages.slice(-6).map(function(m){return (m.role==='user'?'相手:':'あなた('+currentChar.name+'):')+m.content.slice(0,150);}).join('\n');
+  callAI(hist+'\nあなた('+currentChar.name+'):',currentPrompt,false).then(function(reply){
+    removeTyping();
+    messages.push({role:'assistant',content:reply});
+    addMsg('ai',reply);
+  }).catch(function(e){removeTyping();showToast('エラー:'+e.message.slice(0,30));});
+}
+
+function goChange(){
+  if(window.parent!==window){
+    window.parent.postMessage({type:'OPEN_OTAKU'},'*');
+  } else {
+    window.location.href='otaku-engine.html';
+  }
+}
+
+// postMessage受信
+window.addEventListener('message',function(e){
+  if(e.data&&e.data.type==='CHAR_DATA'&&e.data.data) setChar(e.data.data);
+});
+
+// 初期化：localStorageからキャラを読む
+(function(){
+  var saved=localStorage.getItem('narikiri_char_data');
+  if(saved){try{var d=JSON.parse(saved);if(d&&d.name) setChar(d);}catch(e){}}
+  else{document.getElementById('prep-txt').textContent='キャラ研究AIでキャラを選んでください';}
+})();
+</script>
+</body>
+</html>
