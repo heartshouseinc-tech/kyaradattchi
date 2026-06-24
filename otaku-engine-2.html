@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>キャラ解析</title>
+<style>
+:root{--bg:#0f0018;--bg2:#180028;--bg3:#22003a;--card:#1a0030;--bor:rgba(255,120,220,.12);--bor2:rgba(255,120,220,.28);--pink:#f472b6;--pur:#a855f7;--pur2:#7c3aed;--pur-xl:rgba(168,85,247,.12);--gold:#f0b830;--txt:#fff0f8;--txt2:#c090d0;--txt3:#806090;--r:12px;--r2:8px;}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--txt);font-family:'Hiragino Sans','Noto Sans JP',sans-serif;min-height:100dvh;}
+.hdr{background:linear-gradient(135deg,#1a0030,#0a0020);padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:1.5px solid var(--bor);}
+.back-btn{padding:5px 12px;border-radius:20px;border:1.5px solid var(--bor2);background:transparent;color:var(--txt2);font-size:11px;cursor:pointer;font-family:inherit;text-decoration:none;display:flex;align-items:center;}
+.hdr-title{font-size:14px;font-weight:700;color:var(--txt2);}
+.main{padding:16px;max-width:500px;margin:0 auto;}
+/* 大きいプリセットグリッド */
+.preset-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+.preset-card{background:var(--card);border:2px solid var(--bor);border-radius:var(--r);padding:16px;text-align:center;cursor:pointer;transition:.15s;}
+.preset-card:active{transform:scale(.96);border-color:var(--pink);}
+.preset-card.sel{border-color:var(--pur);background:var(--pur-xl);}
+.preset-ico{font-size:28px;margin-bottom:6px;display:block;}
+.preset-nm{font-size:13px;font-weight:700;color:var(--txt2);}
+/* 自由入力 */
+.inp-row{display:flex;gap:8px;margin-bottom:16px;}
+.inp{flex:1;padding:12px 14px;background:var(--bg3);border:1.5px solid var(--bor);border-radius:var(--r2);color:var(--txt);font-size:13px;font-family:inherit;outline:none;}
+.inp:focus{border-color:var(--pink);}
+.go-btn{padding:12px 20px;border-radius:var(--r2);border:none;background:linear-gradient(135deg,var(--pur2),var(--pink));color:#fff;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit;}
+.go-btn:disabled{opacity:.4;}
+/* ローディング */
+.loading{text-align:center;padding:30px;display:none;}
+.loading-ico{font-size:36px;animation:spin 1.5s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.loading-txt{font-size:12px;color:var(--txt3);margin-top:8px;}
+/* 完了 */
+.done-card{background:var(--card);border:2px solid var(--pur);border-radius:var(--r);padding:16px;margin-top:16px;display:none;}
+.done-name{font-size:16px;font-weight:900;color:var(--txt);margin-bottom:4px;}
+.done-desc{font-size:11px;color:var(--txt2);line-height:1.7;margin-bottom:12px;}
+.send-btn{width:100%;padding:13px;border-radius:var(--r2);border:none;background:linear-gradient(135deg,var(--pur2),var(--pur));color:#fff;font-size:14px;font-weight:900;cursor:pointer;font-family:inherit;}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg2);border:1.5px solid var(--bor2);color:var(--txt);padding:8px 18px;border-radius:20px;font-size:11px;font-weight:700;z-index:9999;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;}
+#toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <a class="back-btn" href="petchi-hub.html">← 戻る</a>
+  <div class="hdr-title" id="hdr-title">キャラを選ぶ</div>
+</div>
+<div class="main">
+  <div class="preset-grid" id="preset-grid"></div>
+  <div class="inp-row">
+    <input class="inp" id="char-inp" placeholder="キャラ名を入力...">
+    <button class="go-btn" id="go-btn" onclick="analyze()">解析して送る</button>
+  </div>
+  <div class="loading" id="loading">
+    <div class="loading-ico">🔍</div>
+    <div class="loading-txt" id="loading-txt">解析中...</div>
+  </div>
+  <div class="done-card" id="done-card">
+    <div class="done-name" id="done-name"></div>
+    <div class="done-desc" id="done-desc"></div>
+    <button class="send-btn" onclick="sendToNarikiri()">🎭 このキャラで話す</button>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+var EP='https://asia-northeast1-kensetsu-nippo-842a2.cloudfunctions.net/askAI';
+var KEY='HeartsHouse2026Key';
+var PRESETS=[
+  {ico:'🔵',nm:'ドラえもん'},{ico:'🌀',nm:'孫悟空'},
+  {ico:'⚓',nm:'ルフィ'},{ico:'🔥',nm:'炭治郎'},
+  {ico:'😄',nm:'明石家さんま'},{ico:'⚔',nm:'織田信長'},
+  {ico:'🌙',nm:'セーラームーン'},{ico:'🎤',nm:'カスタム...'}
+];
+var currentCharData=null;
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+var _tt;
+function showToast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(function(){t.classList.remove('show');},3000);}
+
+function renderPresets(){
+  document.getElementById('preset-grid').innerHTML=PRESETS.map(function(p){
+    if(p.nm==='カスタム...') return '<div class="preset-card" onclick="document.getElementById(\'char-inp\').focus()"><span class="preset-ico">'+p.ico+'</span><span class="preset-nm">'+p.nm+'</span></div>';
+    return '<div class="preset-card" onclick="selectPreset(this,\''+esc(p.nm)+'\')" data-nm="'+esc(p.nm)+'"><span class="preset-ico">'+p.ico+'</span><span class="preset-nm">'+esc(p.nm)+'</span></div>';
+  }).join('');
+}
+function selectPreset(el,name){
+  document.querySelectorAll('.preset-card').forEach(function(c){c.classList.remove('sel');});
+  el.classList.add('sel');
+  document.getElementById('char-inp').value=name;
+}
+
+async function analyze(){
+  var name=document.getElementById('char-inp').value.trim();
+  if(!name){showToast('キャラ名を入力してください');return;}
+  var btn=document.getElementById('go-btn');btn.disabled=true;
+  document.getElementById('loading').style.display='block';
+  document.getElementById('done-card').style.display='none';
+  document.getElementById('loading-txt').textContent=name+'を解析中...';
+  document.getElementById('hdr-title').textContent=name+'を解析中';
+
+  var schema={type:'object',properties:{
+    name:{type:'string'},speech_style:{type:'string'},
+    catchphrases:{type:'array',items:{type:'string'}},
+    personality:{type:'string'},thinking_pattern:{type:'string'},
+    background:{type:'string'},reaction_happy:{type:'string'},
+    reaction_angry:{type:'string'},famous_lines:{type:'array',items:{type:'string'}}
+  },required:['name','speech_style','catchphrases','personality','thinking_pattern','background']};
+
+  try{
+    // Step1: Google検索でキャラ情報を収集（useSearch:true、responseSchemaなし）
+    var r1=await fetch(EP,{method:'POST',headers:{'Content-Type':'application/json','x-access-key':KEY},
+      body:JSON.stringify({model:'gemini-2.5-flash',mode:'normal',
+        prompt:'「'+name+'」というキャラクターについて詳しく教えてください。口調・口癖・性格・思考パターン・名言・背景を詳しく説明してください。',
+        useSearch:true,useCache:true})});
+    var d1=await r1.json().catch(function(){return{};});
+    if(!r1.ok) throw new Error('HTTP '+r1.status);
+    var rawInfo=d1?.data?.text||d1?.candidates?.[0]?.content?.parts?.[0]?.text||d1?.text||'';
+
+    // Step2: 収集情報をJSON化（useSearch:false、responseSchema使用）
+    var schema={type:'object',properties:{
+      name:{type:'string'},speech_style:{type:'string'},
+      catchphrases:{type:'array',items:{type:'string'}},
+      personality:{type:'string'},thinking_pattern:{type:'string'},
+      background:{type:'string'},reaction_happy:{type:'string'},
+      reaction_angry:{type:'string'},famous_lines:{type:'array',items:{type:'string'}}
+    },required:['name','speech_style','catchphrases','personality','thinking_pattern','background']};
+
+    var r2=await fetch(EP,{method:'POST',headers:{'Content-Type':'application/json','x-access-key':KEY},
+      body:JSON.stringify({model:'gemini-2.5-flash',mode:'normal',
+        prompt:'以下の情報をもとに「'+name+'」のキャラクターデータをJSON形式で整理してください。\n\n'+rawInfo.slice(0,3000),
+        useSearch:false,useCache:true,responseSchema:schema})});
+    var d2=await r2.json().catch(function(){return{};});
+    if(!r2.ok) throw new Error('HTTP '+r2.status);
+    var text=d2?.data?.text||d2?.candidates?.[0]?.content?.parts?.[0]?.text||d2?.text||'';
+    currentCharData=JSON.parse(text.replace(/```json|```/g,'').trim());
+    localStorage.setItem('narikiri_char_data',JSON.stringify(currentCharData));
+    document.getElementById('loading').style.display='none';
+    document.getElementById('done-name').textContent=currentCharData.name;
+    document.getElementById('done-desc').textContent=(currentCharData.personality||'')+' | '+((currentCharData.catchphrases||[]).slice(0,2).join('・'));
+    document.getElementById('done-card').style.display='block';
+    document.getElementById('hdr-title').textContent=currentCharData.name+'の解析完了';
+    showToast(name+'の解析が完了しました');
+    // hubへの自動送信
+    if(window.parent!==window){
+      window.parent.postMessage({type:'CHAR_DATA',data:currentCharData},'*');
+    }
+  }catch(e){
+    document.getElementById('loading').style.display='none';
+    showToast('エラー: '+e.message.slice(0,40));
+  }
+  btn.disabled=false;
+}
+
+function sendToNarikiri(){
+  if(!currentCharData) return;
+  if(window.parent!==window){
+    window.parent.postMessage({type:'CHAR_DATA',data:currentCharData},'*');
+  } else {
+    window.location.href='narikiri-bot.html';
+  }
+}
+
+// AUTO_ANALYZEを受け取ったら自動解析
+window.addEventListener('message',function(e){
+  if(e.data&&e.data.type==='AUTO_ANALYZE'&&e.data.charName){
+    document.getElementById('char-inp').value=e.data.charName;
+    analyze();
+  }
+});
+
+// URLパラメータ or localStorage pending
+(function(){
+  var pending=localStorage.getItem('narikiri_pending_char');
+  if(pending&&window.parent===window){
+    document.getElementById('char-inp').value=pending;
+  }
+})();
+
+renderPresets();
+</script>
+</body>
+</html>
